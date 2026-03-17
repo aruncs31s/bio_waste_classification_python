@@ -1,0 +1,14 @@
+path: C:/Users/amarn/yolov5/data
+train: ../train/images
+val: ../valid/images
+test: ../test/images
+
+nc: 2
+names: ['Biodegradable', 'Non Biodegradable']
+
+roboflow:
+  workspace: annnote
+  project: classification-ro8ph
+  version: 5
+  license: CC BY 4.0
+  url: https://universe.roboflow.com/annnote/classification-ro8ph/dataset/5

@@ -33,9 +33,14 @@ import csv
 import os
 import platform
 import sys
+import pathlib
 from pathlib import Path
 
 import torch
+
+plt = platform.system()
+if plt != 'Windows':
+    pathlib.WindowsPath = pathlib.PosixPath
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
