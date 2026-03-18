@@ -31,28 +31,27 @@ Usage - formats:
 import argparse
 import csv
 import os
+import pathlib
 import platform
 import sys
 import time
 from pathlib import Path
-import pathlib
+
 import numpy as np
 import torch
 
 plt = platform.system()
 if plt != "Windows":
-   pathlib.WindowsPath = pathlib.PosixPath
+    pathlib.WindowsPath = pathlib.PosixPath
 
 FILE = Path(__file__).resolve()
-ROOT = FILE.parents[0]  # YOLOv5 root directory
+ROOT = FILE.parents[1]  # YOLOv5 root directory (project root, not custom/)
 if str(ROOT) not in sys.path:
     sys.path.append(str(ROOT))  # add ROOT to PATH
 ROOT = Path(os.path.relpath(ROOT, Path.cwd()))  # relative
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
-from models.common import DetectMultiBackend
-from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 from utils.general import (
     LOGGER,
     Profile,
@@ -70,6 +69,9 @@ from utils.general import (
     xyxy2xywh,
 )
 from utils.torch_utils import select_device, smart_inference_mode
+
+from models.common import DetectMultiBackend
+from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 
 
 @smart_inference_mode()
@@ -155,8 +157,8 @@ def run(
         ```
     """
     # --- ROI definition (pixels) — adjust to your camera region ---
-    ROI_X1, ROI_Y1 = 100, 100   # top-left corner
-    ROI_X2, ROI_Y2 = 800, 400   # bottom-right corner
+    ROI_X1, ROI_Y1 = 100, 100  # top-left corner
+    ROI_X2, ROI_Y2 = 800, 400  # bottom-right corner
 
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
@@ -198,7 +200,6 @@ def run(
     _last_det_time = 0.0
 
     for path, im, im0s, vid_cap, s in dataset:
-
         # --- Approach A: Crop frame to ROI before inference ---
         # Get the raw BGR frame (im0s is the original, im is already resized/transposed)
         raw_frame = im0s[0] if isinstance(im0s, list) else im0s  # handle webcam (list) vs image
@@ -281,8 +282,7 @@ def run(
 
             # Draw ROI rectangle on the full frame for visualization
             cv2.rectangle(im0, (ROI_X1, ROI_Y1), (ROI_X2, ROI_Y2), (255, 0, 0), 2)
-            cv2.putText(im0, "ROI", (ROI_X1 + 4, ROI_Y1 + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            cv2.putText(im0, "ROI", (ROI_X1 + 4, ROI_Y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
             if len(det):
                 # Step 1: Rescale boxes from inference size → ROI crop size
@@ -446,7 +446,9 @@ def parse_opt():
     parser.add_argument("--half", action="store_true", help="use FP16 half-precision inference")
     parser.add_argument("--dnn", action="store_true", help="use OpenCV DNN for ONNX inference")
     parser.add_argument("--vid-stride", type=int, default=1, help="video frame-rate stride")
-    parser.add_argument("--max-det-fps", type=float, default=5, help="maximum detection rate in frames per second (0 = unlimited)")
+    parser.add_argument(
+        "--max-det-fps", type=float, default=5, help="maximum detection rate in frames per second (0 = unlimited)"
+    )
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))

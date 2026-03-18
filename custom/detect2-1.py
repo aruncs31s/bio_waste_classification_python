@@ -31,18 +31,19 @@ Usage - formats:
 import argparse
 import csv
 import os
+import pathlib
 import platform
 import sys
 import time
 from pathlib import Path
-import pathlib
+
 import numpy as np
-import torch
 import RPi.GPIO as GPIO
+import torch
 
 plt = platform.system()
 if plt != "Windows":
-   pathlib.WindowsPath = pathlib.PosixPath
+    pathlib.WindowsPath = pathlib.PosixPath
 
 FILE = Path(__file__).resolve()
 ROOT = FILE.parents[0]  # YOLOv5 root directory
@@ -59,12 +60,15 @@ GPIO.setup(SERVO_PIN, GPIO.OUT)
 servo_pwm = GPIO.PWM(SERVO_PIN, 50)  # 50 Hz for servo
 servo_pwm.start(0)
 
+
 def set_servo_angle(duty):
     """Rotate servo to a given angle (0–180 degrees)."""
-    #duty = 2.5 + (angle / 180.0) * 10.0  # map angle → duty cycle
+    # duty = 2.5 + (angle / 180.0) * 10.0  # map angle → duty cycle
     servo_pwm.ChangeDutyCycle(duty)
-    time.sleep(0.5)               # wait for servo to reach position
+    time.sleep(0.5)  # wait for servo to reach position
     servo_pwm.ChangeDutyCycle(0)  # stop signal to prevent jitter
+
+
 # ---------------------------------------------------------------------------
 
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
@@ -173,8 +177,8 @@ def run(
         ```
     """
     # --- ROI definition (pixels) — adjust to your camera region ---
-    ROI_X1, ROI_Y1 = 100, 100   # top-left corner
-    ROI_X2, ROI_Y2 = 800, 400   # bottom-right corner
+    ROI_X1, ROI_Y1 = 100, 100  # top-left corner
+    ROI_X2, ROI_Y2 = 800, 400  # bottom-right corner
 
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
@@ -216,7 +220,6 @@ def run(
     _last_det_time = 0.0
 
     for path, im, im0s, vid_cap, s in dataset:
-
         # --- Approach A: Crop frame to ROI before inference ---
         # Get the raw BGR frame (im0s is the original, im is already resized/transposed)
         raw_frame = im0s[0] if isinstance(im0s, list) else im0s  # handle webcam (list) vs image
@@ -299,8 +302,7 @@ def run(
 
             # Draw ROI rectangle on the full frame for visualization
             cv2.rectangle(im0, (ROI_X1, ROI_Y1), (ROI_X2, ROI_Y2), (255, 0, 0), 2)
-            cv2.putText(im0, "ROI", (ROI_X1 + 4, ROI_Y1 + 20),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            cv2.putText(im0, "ROI", (ROI_X1 + 4, ROI_Y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
             if len(det):
                 # Step 1: Rescale boxes from inference size → ROI crop size
@@ -317,13 +319,14 @@ def run(
 
                     # --- Servo control based on detected class ---
                     detected_class = names[int(c)].lower()
-                    if detected_class == 'biodegradable':
+                    print("Detected Class 1243 ", detected_class)
+                    if detected_class == "biodegradable":
                         print(f"[SERVO] Biodegradable → 45°")
-                        move_servo(2.5)
+                        move_servo(2.5 + 1)  ## Err offset
                         continue
                         # set_servo_angle(2.5)
 
-                    if detected_class == 'nonbiodegradable':
+                    if detected_class == "non biodegradable" or detected_class[:3] == "non":
                         print(f"[SERVO] Non-Biodegradable → 135°")
                         move_servo(10)
                         continue
@@ -401,9 +404,16 @@ def run(
     # --- Servo cleanup ---
     servo_pwm.stop()
     GPIO.cleanup()
+
+
 def move_servo(duty):
+    print("start moving servo to ", duty)
+
     set_servo_angle(duty)
+
     time.sleep(3)
+
+    print("done moving servo to ", duty)
 
 
 def parse_opt():
@@ -485,7 +495,9 @@ def parse_opt():
     parser.add_argument("--half", action="store_true", help="use FP16 half-precision inference")
     parser.add_argument("--dnn", action="store_true", help="use OpenCV DNN for ONNX inference")
     parser.add_argument("--vid-stride", type=int, default=1, help="video frame-rate stride")
-    parser.add_argument("--max-det-fps", type=float, default=5, help="maximum detection rate in frames per second (0 = unlimited)")
+    parser.add_argument(
+        "--max-det-fps", type=float, default=5, help="maximum detection rate in frames per second (0 = unlimited)"
+    )
     opt = parser.parse_args()
     opt.imgsz *= 2 if len(opt.imgsz) == 1 else 1  # expand
     print_args(vars(opt))
