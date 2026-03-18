@@ -321,13 +321,13 @@ def run(
                     detected_class = names[int(c)].lower()
                     print("Detected Class 1243 ", detected_class)
                     if detected_class == "biodegradable":
-                        print(f"[SERVO] Biodegradable → 45°")
+                        print("[SERVO] Biodegradable → 45°")
                         move_servo(2.5 + 1)  ## Err offset
                         continue
                         # set_servo_angle(2.5)
 
                     if detected_class == "non biodegradable" or detected_class[:3] == "non":
-                        print(f"[SERVO] Non-Biodegradable → 135°")
+                        print("[SERVO] Non-Biodegradable → 135°")
                         move_servo(10)
                         continue
                         # set_servo_angle(10)
