@@ -1,4 +1,3 @@
-import argparse
 import csv
 import os
 import pathlib
@@ -36,7 +35,6 @@ from utils.general import (
     cv2,
     increment_path,
     non_max_suppression,
-    print_args,
     scale_boxes,
     strip_optimizer,
     xyxy2xywh,
