@@ -4,7 +4,7 @@ val: ../valid/images
 test: ../test/images
 
 nc: 2
-names: ['Biodegradable', 'Non Biodegradable']
+names: ["Biodegradable", "Non Biodegradable"]
 
 roboflow:
   workspace: annnote
