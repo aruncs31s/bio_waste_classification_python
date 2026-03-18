@@ -12,15 +12,16 @@ class DummyUART(UARTInterface):
 
 from enum import Enum
 class ConvoyerBeltActions(Enum):
-    STOP = 1
-    START = 2
+    START = 1
+    STOP = 2 
    
-
 class PIUART(UARTInterface):
-    def __init__(self, port: str, baudrate: int = 9600):
+    
+    def __init__(self, port: str = '/dev/serial0', baudrate: int = 9600):
         try:
             import serial
             self.ser = serial.Serial(port, baudrate)
+            
         except Exception as e:
             raise ImportError("Please install pyserial to use PIUART")
     def send(self, data: ConvoyerBeltActions) -> None:
