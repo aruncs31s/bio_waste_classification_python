@@ -1,11 +1,11 @@
-import argparse
-import csv
 import os
 import pathlib
 import platform
 import sys
 import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable, Optional, Protocol
 
 # Setup path BEFORE imports from local modules
 plt = platform.system()
@@ -50,8 +50,114 @@ from utils.torch_utils import select_device, smart_inference_mode
 
 from custom.config import ROI_X1, ROI_Y1, ROI_X2, ROI_Y2  
 
-def set_servo_angle(duty):
-    print("moving to ", duty)
+@dataclass(frozen=True)
+class ROIConfig:
+    x1: int
+    y1: int
+    x2: int
+    y2: int
+
+
+@dataclass
+class ROIFrameData:
+    tensor: np.ndarray
+    roi_h: int
+    roi_w: int
+    origin: tuple[int, int]
+
+
+class ServoActuator(Protocol):
+    def __call__(self, duty: float) -> None:
+        ...
+
+
+class ROIProcessor:
+    def __init__(self, roi: ROIConfig):
+        self.roi = roi
+
+    def draw_overlay(self, frame):
+        cv2.rectangle(frame, (self.roi.x1, self.roi.y1), (self.roi.x2, self.roi.y2), (255, 0, 0), 2)
+        cv2.putText(frame, "ROI", (self.roi.x1 + 4, self.roi.y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+
+    def extract_tensor(self, raw_frame, imgsz) -> Optional[ROIFrameData]:
+        h, w = raw_frame.shape[:2]
+        x1 = max(0, min(self.roi.x1, w))
+        x2 = max(0, min(self.roi.x2, w))
+        y1 = max(0, min(self.roi.y1, h))
+        y2 = max(0, min(self.roi.y2, h))
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        roi_crop = raw_frame[y1:y2, x1:x2]
+        roi_h, roi_w = roi_crop.shape[:2]
+        roi_resized = cv2.resize(roi_crop, (imgsz[1], imgsz[0]))
+        im_roi = roi_resized[:, :, ::-1].transpose(2, 0, 1)  # BGR->RGB, HWC->CHW
+        return ROIFrameData(np.ascontiguousarray(im_roi), roi_h, roi_w, (x1, y1))
+
+    @staticmethod
+    def scale_and_offset_boxes(det, model_input_shape, roi_h, roi_w, roi_origin):
+        det[:, :4] = scale_boxes(model_input_shape, det[:, :4], (roi_h, roi_w, 3)).round()
+        x1, y1 = roi_origin
+        det[:, [0, 2]] += x1
+        det[:, [1, 3]] += y1
+
+
+class DetectionThrottle:
+    def __init__(self, max_fps: float):
+        self.frame_interval = 1.0 / max_fps if max_fps > 0 else 0.0
+        self.last_det_time = 0.0
+
+    def allow(self) -> bool:
+        now = time.time()
+        if now - self.last_det_time < self.frame_interval:
+            return False
+        self.last_det_time = now
+        return True
+
+
+class ServoPolicy:
+    def __init__(self, actuator: ServoActuator):
+        self.actuator = actuator
+        self.rules: list[tuple[Callable[[str], bool], float, str]] = [
+            (lambda cls: cls == "biodegradable", 3.5, "Biodegradable -> 45 deg"),
+            (lambda cls: cls == "non biodegradable" or cls.startswith("non"), 10.0, "Non-Biodegradable -> 135 deg"),
+        ]
+
+    def handle(self, detected_class: str) -> None:
+        for matcher, duty, message in self.rules:
+            if matcher(detected_class):
+                print(f"[SERVO] {message}")
+                self.actuator(duty)
+                return
+
+
+from abc import ABC, abstractmethod
+class UARTInterface(ABC):
+    @abstractmethod
+    def send(self, data: bytes) -> None:
+        pass
+
+class DummyUART(UARTInterface):
+    def send(self, data: bytes) -> None:
+        print(f"[UART] Sending data: {data.hex()}")
+
+
+from enum import Enum
+class ConvoyerBeltActions(Enum):
+    STOP = 1
+    START = 2
+   
+
+class PIUART(UARTInterface):
+    def __init__(self, port: str, baudrate: int = 9600):
+        try:
+            import serial
+            self.ser = serial.Serial(port, baudrate)
+        except Exception as e:
+            raise ImportError("Please install pyserial to use PIUART")
+    def send(self, data: ConvoyerBeltActions) -> None:
+        self.ser.write(data.value.to_bytes(1, byteorder='big'))
 
 
 @smart_inference_mode()
@@ -86,6 +192,9 @@ def run(
     dnn=False,  # use OpenCV DNN for ONNX inference
     vid_stride=1,  # video frame-rate stride
     max_det_fps=5,  # maximum detection rate (frames per second)
+    roi_processor: Optional[ROIProcessor] = None,
+    servo_policy: Optional[ServoPolicy] = None,
+    throttle: Optional[DetectionThrottle] = None,
 ):
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
@@ -99,6 +208,9 @@ def run(
     # Directories
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
     (save_dir / "labels" if save_txt else save_dir).mkdir(parents=True, exist_ok=True)  # make dir
+    roi_processor = roi_processor or ROIProcessor(ROIConfig(ROI_X1, ROI_Y1, ROI_X2, ROI_Y2))
+    servo_policy = servo_policy or ServoPolicy(move_servo)
+    throttle = throttle or DetectionThrottle(max_det_fps)
 
     # Load model
     device = select_device(device)
@@ -122,33 +234,18 @@ def run(
     model.warmup(imgsz=(1 if pt or model.triton else bs, 3, *imgsz))  # warmup
     seen, windows, dt = 0, [], (Profile(device=device), Profile(device=device), Profile(device=device))
 
-    # --- Max detection FPS throttle ---
-    _frame_interval = 1.0 / max_det_fps if max_det_fps > 0 else 0.0
-    _last_det_time = 0.0
-
     for path, im, im0s, vid_cap, s in dataset:
-        # --- Approach A: Crop frame to ROI before inference ---
-        # Get the raw BGR frame (im0s is the original, im is already resized/transposed)
         raw_frame = im0s[0] if isinstance(im0s, list) else im0s  # handle webcam (list) vs image
-        roi_h = ROI_Y2 - ROI_Y1
-        roi_w = ROI_X2 - ROI_X1
+        roi_data = roi_processor.extract_tensor(raw_frame, imgsz)
+        if roi_data is None:
+            LOGGER.warning("Invalid ROI bounds for current frame; skipping frame")
+            continue
 
-        # Crop BGR frame to ROI region
-        roi_crop = raw_frame[ROI_Y1:ROI_Y2, ROI_X1:ROI_X2]
-
-        # Resize crop to model input size, then convert HWC BGR → CHW RGB
-        roi_resized = cv2.resize(roi_crop, (imgsz[1], imgsz[0]))
-        im_roi = roi_resized[:, :, ::-1].transpose(2, 0, 1)  # BGR→RGB, HWC→CHW
-        im_roi = np.ascontiguousarray(im_roi)
-
-        # --- FPS throttle: only run inference if enough time has elapsed ---
-        _now = time.time()
-        if _now - _last_det_time < _frame_interval:
+        if not throttle.allow():
             continue  # skip this frame, not yet time for next detection
-        _last_det_time = _now
 
         with dt[0]:
-            im = torch.from_numpy(im_roi).to(model.device)
+            im = torch.from_numpy(roi_data.tensor).to(model.device)
             im = im.half() if model.fp16 else im.float()  # uint8 to fp16/32
             im /= 255  # 0 - 255 to 0.0 - 1.0
             if len(im.shape) == 3:
@@ -158,26 +255,21 @@ def run(
 
         # Inference
         with dt[1]:
-            visualize = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
+            vis_path = increment_path(save_dir / Path(path).stem, mkdir=True) if visualize else False
             if model.xml and im.shape[0] > 1:
                 pred = None
                 for image in ims:
                     if pred is None:
-                        pred = model(image, augment=augment, visualize=visualize).unsqueeze(0)
+                        pred = model(image, augment=augment, visualize=vis_path).unsqueeze(0)
                     else:
-                        pred = torch.cat((pred, model(image, augment=augment, visualize=visualize).unsqueeze(0)), dim=0)
+                        pred = torch.cat((pred, model(image, augment=augment, visualize=vis_path).unsqueeze(0)), dim=0)
                 pred = [pred, None]
             else:
-                pred = model(im, augment=augment, visualize=visualize)
+                pred = model(im, augment=augment, visualize=vis_path)
         # NMS
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
-        # Second-stage classifier (optional)
-        # pred = utils.general.apply_classifier(pred, classifier_model, im, im0s)
-
-        # Define the path for the CSV file
-        csv_path = save_dir / "predictions.csv"
 
         # Process predictions
         for i, det in enumerate(pred):  # per image
@@ -197,16 +289,10 @@ def run(
             annotator = Annotator(im0, line_width=line_thickness, example=str(names))
 
             # Draw ROI rectangle on the full frame for visualization
-            cv2.rectangle(im0, (ROI_X1, ROI_Y1), (ROI_X2, ROI_Y2), (255, 0, 0), 2)
-            cv2.putText(im0, "ROI", (ROI_X1 + 4, ROI_Y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+            roi_processor.draw_overlay(im0)
 
             if len(det):
-                # Step 1: Rescale boxes from inference size → ROI crop size
-                det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], (roi_h, roi_w, 3)).round()
-
-                # Step 2: Offset boxes back to full-frame coordinates
-                det[:, [0, 2]] += ROI_X1  
-                det[:, [1, 3]] += ROI_Y1  
+                roi_processor.scale_and_offset_boxes(det, im.shape[2:], roi_data.roi_h, roi_data.roi_w, roi_data.origin)
 
                 # Print results
                 for c in det[:, 5].unique():
@@ -215,16 +301,7 @@ def run(
 
                     # --- Servo control based on detected class ---
                     detected_class = names[int(c)].lower()
-                    print("Detected Class 1243 ", detected_class)
-                    if detected_class == "biodegradable":
-                        print("[SERVO] Biodegradable → 45°")
-                        move_servo(2.5 + 1)  ## Err offset
-                        continue
-
-                    if detected_class == "non biodegradable" or detected_class[:3] == "non":
-                        print("[SERVO] Non-Biodegradable → 135°")
-                        move_servo(10)
-                        continue
+                    servo_policy.handle(detected_class)
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
@@ -277,7 +354,7 @@ def run(
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ""
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     if update:
-        strip_optimizer(weights[0]) 
+        strip_optimizer(weights[0] if isinstance(weights, (list, tuple)) else weights)
 
 
 
