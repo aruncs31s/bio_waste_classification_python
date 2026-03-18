@@ -28,13 +28,26 @@ class PIUART(UARTInterface):
 
 
 
-class ConvoyerBeltActions(Enum):
+class ConveyorBeltActions(Enum):
     START = 1
     STOP = 2 
 
 class ConveyorController:
     def __init__(self, uart: UARTInterface):
         self.uart = uart
-    def execute_action(self, action: ConvoyerBeltActions) -> None:
+    def execute_action(self, action: ConveyorBeltActions) -> None:
         payload = action.value.to_bytes(1, byteorder='big')
         self.uart.send(payload)
+
+
+if __name__ == "__main__":
+    import time
+    pi_uart = PIUART(port='/dev/serial0', baudrate=9600)
+    conveyor = ConveyorController(pi_uart)
+    while True:
+        try:
+            conveyor.execute_action(ConveyorBeltActions.START)
+            time.sleep(5)  # Run conveyor for 5 seconds
+            conveyor.execute_action(ConveyorBeltActions.STOP)
+        finally:        
+            pi_uart.close()
