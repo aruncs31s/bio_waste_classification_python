@@ -24,6 +24,11 @@ from detect2 import parse_opt as parse_opt_og
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
 from models.common import DetectMultiBackend
+
+from custom.servo_control import move_servo
+from custom.csv_handler import write_to_csv
+from custom.file_handler import save_results
+
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 from utils.general import (
     LOGGER,
@@ -43,6 +48,7 @@ from utils.general import (
 )
 from utils.torch_utils import select_device, smart_inference_mode
 
+from custom.config import ROI_X1, ROI_Y1, ROI_X2, ROI_Y2  
 
 def set_servo_angle(duty):
     print("moving to ", duty)
@@ -81,10 +87,6 @@ def run(
     vid_stride=1,  # video frame-rate stride
     max_det_fps=5,  # maximum detection rate (frames per second)
 ):
-    # --- ROI definition (pixels) — adjust to your camera region ---
-    ROI_X1, ROI_Y1 = 100, 100  # top-left corner
-    ROI_X2, ROI_Y2 = 800, 400  # bottom-right corner
-
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
     is_file = Path(source).suffix[1:] in (IMG_FORMATS + VID_FORMATS)
@@ -92,7 +94,7 @@ def run(
     webcam = source.isnumeric() or source.endswith(".streams") or (is_url and not is_file)
     screenshot = source.lower().startswith("screen")
     if is_url and is_file:
-        source = check_file(source)  # download
+        source = check_file(source)  
 
     # Directories
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
@@ -177,17 +179,6 @@ def run(
         # Define the path for the CSV file
         csv_path = save_dir / "predictions.csv"
 
-        # Create or append to the CSV file
-        def write_to_csv(image_name, prediction, confidence):
-            """Writes prediction data for an image to a CSV file, appending if the file exists."""
-            data = {"Image Name": image_name, "Prediction": prediction, "Confidence": confidence}
-            file_exists = os.path.isfile(csv_path)
-            with open(csv_path, mode="a", newline="") as f:
-                writer = csv.DictWriter(f, fieldnames=data.keys())
-                if not file_exists:
-                    writer.writeheader()
-                writer.writerow(data)
-
         # Process predictions
         for i, det in enumerate(pred):  # per image
             seen += 1
@@ -214,8 +205,8 @@ def run(
                 det[:, :4] = scale_boxes(im.shape[2:], det[:, :4], (roi_h, roi_w, 3)).round()
 
                 # Step 2: Offset boxes back to full-frame coordinates
-                det[:, [0, 2]] += ROI_X1  # shift x coords
-                det[:, [1, 3]] += ROI_Y1  # shift y coords
+                det[:, [0, 2]] += ROI_X1  
+                det[:, [1, 3]] += ROI_Y1  
 
                 # Print results
                 for c in det[:, 5].unique():
@@ -229,13 +220,11 @@ def run(
                         print("[SERVO] Biodegradable → 45°")
                         move_servo(2.5 + 1)  ## Err offset
                         continue
-                        # set_servo_angle(2.5)
 
                     if detected_class == "non biodegradable" or detected_class[:3] == "non":
                         print("[SERVO] Non-Biodegradable → 135°")
                         move_servo(10)
                         continue
-                        # set_servo_angle(10)
 
                 # Write results
                 for *xyxy, conf, cls in reversed(det):
@@ -245,7 +234,7 @@ def run(
                     confidence_str = f"{confidence:.2f}"
 
                     if save_csv:
-                        write_to_csv(p.name, label, confidence_str)
+                        write_to_csv(save_path,p.name, label, confidence_str)
 
                     if save_txt:  # Write to file
                         if save_format == 0:
@@ -275,24 +264,8 @@ def run(
                 cv2.imshow(str(p), im0)
                 cv2.waitKey(1)  # 1 millisecond
 
-            # Save results (image with detections)
             if save_img:
-                if dataset.mode == "image":
-                    cv2.imwrite(save_path, im0)
-                else:  # 'video' or 'stream'
-                    if vid_path[i] != save_path:  # new video
-                        vid_path[i] = save_path
-                        if isinstance(vid_writer[i], cv2.VideoWriter):
-                            vid_writer[i].release()  # release previous video writer
-                        if vid_cap:  # video
-                            fps = vid_cap.get(cv2.CAP_PROP_FPS)
-                            w = int(vid_cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-                            h = int(vid_cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-                        else:  # stream
-                            fps, w, h = 30, im0.shape[1], im0.shape[0]
-                        save_path = str(Path(save_path).with_suffix(".mp4"))  # force *.mp4 suffix on results videos
-                        vid_writer[i] = cv2.VideoWriter(save_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (w, h))
-                    vid_writer[i].write(im0)
+                save_results(dataset, vid_path, vid_writer, vid_cap, i, im0, save_path)
 
         # Print time (inference-only)
         LOGGER.info(f"{s}{'' if len(det) else '(no detections), '}{dt[1].dt * 1e3:.1f}ms")
@@ -304,15 +277,9 @@ def run(
         s = f"\n{len(list(save_dir.glob('labels/*.txt')))} labels saved to {save_dir / 'labels'}" if save_txt else ""
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     if update:
-        strip_optimizer(weights[0])  # update model (to fix SourceChangeWarning)
-
-    # --- Servo cleanup ---
+        strip_optimizer(weights[0]) 
 
 
-def move_servo(duty):
-    print("start moving servo to ", duty)
-    set_servo_angle(duty)
-    print("done moving servo to ", duty)
 
 
 def parse_opt():
