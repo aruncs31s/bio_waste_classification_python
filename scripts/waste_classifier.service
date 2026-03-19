@@ -1,0 +1,20 @@
+[Unit]
+Description=YOLOv5 Waste Classification Service
+After=multi-user.target network.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Project/yolov5/
+
+ExecStart=/home/pi/Project/yolov5/.venv/bin/python detect2-1.py --source 0 --weights runs/train/exp4/weights/best.pt --conf-thres .5 --vid-stride 1
+
+Restart=always
+RestartSec=5
+
+Environment=PYTHONUNBUFFERED=1
+
+Environment=DISPLAY=:0
+
+[Install]
+WantedBy=multi-user.target
