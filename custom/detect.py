@@ -31,15 +31,15 @@ Usage - formats:
 import argparse
 import csv
 import os
+import pathlib
 import platform
 import sys
-import pathlib
 from pathlib import Path
 
 import torch
 
 plt = platform.system()
-if plt != 'Windows':
+if plt != "Windows":
     pathlib.WindowsPath = pathlib.PosixPath
 
 FILE = Path(__file__).resolve()
