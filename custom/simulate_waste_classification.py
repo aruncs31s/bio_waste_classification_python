@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import os
 import pathlib
 import platform
@@ -5,7 +7,7 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, Optional, Protocol
+from typing import Callable, Protocol
 
 # Setup path BEFORE imports from local modules
 plt = platform.system()
@@ -23,12 +25,11 @@ import torch
 from detect2 import parse_opt as parse_opt_og
 from ultralytics.utils.plotting import Annotator, colors, save_one_box
 
-from models.common import DetectMultiBackend
-
-from custom.servo_control import move_servo
+from custom.config import ROI_X1, ROI_X2, ROI_Y1, ROI_Y2
 from custom.csv_handler import write_to_csv
 from custom.file_handler import save_results
-
+from custom.servo_control import move_servo
+from models.common import DetectMultiBackend
 from utils.dataloaders import IMG_FORMATS, VID_FORMATS, LoadImages, LoadScreenshots, LoadStreams
 from utils.general import (
     LOGGER,
@@ -41,14 +42,12 @@ from utils.general import (
     cv2,
     increment_path,
     non_max_suppression,
-    print_args,
     scale_boxes,
     strip_optimizer,
     xyxy2xywh,
 )
 from utils.torch_utils import select_device, smart_inference_mode
 
-from custom.config import ROI_X1, ROI_Y1, ROI_X2, ROI_Y2  
 
 @dataclass(frozen=True)
 class ROIConfig:
@@ -67,8 +66,7 @@ class ROIFrameData:
 
 
 class ServoActuator(Protocol):
-    def __call__(self, duty: float) -> None:
-        ...
+    def __call__(self, duty: float) -> None: ...
 
 
 class ROIProcessor:
@@ -79,7 +77,7 @@ class ROIProcessor:
         cv2.rectangle(frame, (self.roi.x1, self.roi.y1), (self.roi.x2, self.roi.y2), (255, 0, 0), 2)
         cv2.putText(frame, "ROI", (self.roi.x1 + 4, self.roi.y1 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
 
-    def extract_tensor(self, raw_frame, imgsz) -> Optional[ROIFrameData]:
+    def extract_tensor(self, raw_frame, imgsz) -> ROIFrameData | None:
         h, w = raw_frame.shape[:2]
         x1 = max(0, min(self.roi.x1, w))
         x2 = max(0, min(self.roi.x2, w))
@@ -131,6 +129,7 @@ class ServoPolicy:
                 self.actuator(duty)
                 return
 
+
 @smart_inference_mode()
 def run(
     weights=str(ROOT) + "/" + "yolov5s.pt",  # model path or triton URL
@@ -163,9 +162,9 @@ def run(
     dnn=False,  # use OpenCV DNN for ONNX inference
     vid_stride=1,  # video frame-rate stride
     max_det_fps=5,  # maximum detection rate (frames per second)
-    roi_processor: Optional[ROIProcessor] = None,
-    servo_policy: Optional[ServoPolicy] = None,
-    throttle: Optional[DetectionThrottle] = None,
+    roi_processor: ROIProcessor | None = None,
+    servo_policy: ServoPolicy | None = None,
+    throttle: DetectionThrottle | None = None,
 ):
     source = str(source)
     save_img = not nosave and not source.endswith(".txt")  # save inference images
@@ -174,7 +173,7 @@ def run(
     webcam = source.isnumeric() or source.endswith(".streams") or (is_url and not is_file)
     screenshot = source.lower().startswith("screen")
     if is_url and is_file:
-        source = check_file(source)  
+        source = check_file(source)
 
     # Directories
     save_dir = increment_path(Path(project) / name, exist_ok=exist_ok)  # increment run
@@ -241,7 +240,6 @@ def run(
         with dt[2]:
             pred = non_max_suppression(pred, conf_thres, iou_thres, classes, agnostic_nms, max_det=max_det)
 
-
         # Process predictions
         for i, det in enumerate(pred):  # per image
             seen += 1
@@ -282,7 +280,7 @@ def run(
                     confidence_str = f"{confidence:.2f}"
 
                     if save_csv:
-                        write_to_csv(save_path,p.name, label, confidence_str)
+                        write_to_csv(save_path, p.name, label, confidence_str)
 
                     if save_txt:  # Write to file
                         if save_format == 0:
@@ -326,8 +324,6 @@ def run(
         LOGGER.info(f"Results saved to {colorstr('bold', save_dir)}{s}")
     if update:
         strip_optimizer(weights[0] if isinstance(weights, (list, tuple)) else weights)
-
-
 
 
 def parse_opt():
